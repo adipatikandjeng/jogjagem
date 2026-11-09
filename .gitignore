@@ -1,0 +1,28 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+tsconfig.tsbuildinfo
+
+# Next.js build output
+.next/
+out/
+
+# Nested projects (not part of this repo)
+# explore-jogja-admin-next/
+
+# Generated/temporary files
+export-destinations.js
+export-destinations.ts
+
+# E2E test artifacts
+test-results/
+playwright-report/
+.auth/
+
+
+next-env.d.ts

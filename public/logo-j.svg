@@ -1,0 +1,104 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 480" fill="none">
+  <defs>
+    <!-- Gold gradient matching the image -->
+    <linearGradient id="gold" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%"   stop-color="#F5D98B"/>
+      <stop offset="30%"  stop-color="#C8860A"/>
+      <stop offset="60%"  stop-color="#E8A020"/>
+      <stop offset="100%" stop-color="#8B5E00"/>
+    </linearGradient>
+    <!-- Lighter highlight for inner details -->
+    <linearGradient id="goldLight" x1="0%" y1="0%" x2="80%" y2="100%">
+      <stop offset="0%"   stop-color="#FDF0C0"/>
+      <stop offset="100%" stop-color="#C8860A"/>
+    </linearGradient>
+    <!-- Clip to J shape -->
+    <clipPath id="jClip">
+      <!-- J outer shape: top serif + stem + rounded bottom hook -->
+      <path d="
+        M100,20 L340,20 L340,50
+        L250,50 L250,320
+        Q250,440 160,455
+        Q60,465 45,380
+        L45,355 L75,355
+        L75,375
+        Q80,430 155,425
+        Q225,418 225,330
+        L225,50 L100,50 Z
+      "/>
+    </clipPath>
+  </defs>
+
+  <!-- ── J body (filled gold) ── -->
+  <path d="
+    M100,20 L340,20 L340,50
+    L250,50 L250,320
+    Q250,440 160,455
+    Q60,465 45,380
+    L45,355 L75,355
+    L75,375
+    Q80,430 155,425
+    Q225,418 225,330
+    L225,50 L100,50 Z
+  " fill="url(#gold)"/>
+
+  <!-- ── Everything clipped inside the J bowl (lower-left) ── -->
+  <g clip-path="url(#jClip)">
+
+    <!-- Merapi mountain — large, fills back of J bowl -->
+    <path d="M30,420 L155,160 L280,420 Z" fill="url(#gold)"/>
+    <!-- Merapi slope highlight lines (lighter streaks) -->
+    <path d="M155,160 L120,260 L105,420" stroke="#FDF0C0" stroke-width="8" stroke-linecap="round" fill="none" opacity="0.5"/>
+    <path d="M155,160 L175,240 L200,420" stroke="#FDF0C0" stroke-width="6" stroke-linecap="round" fill="none" opacity="0.4"/>
+    <path d="M155,160 L190,210 L230,360" stroke="#FDF0C0" stroke-width="5" stroke-linecap="round" fill="none" opacity="0.3"/>
+    <!-- Snow / ash cap -->
+    <path d="M130,210 L155,160 L180,210 Q155,235 130,210 Z" fill="#FDF0C0" opacity="0.6"/>
+
+    <!-- Large curling wave (left side of J bowl) -->
+    <path d="
+      M30,370
+      Q55,330 80,340
+      Q105,350 100,380
+      Q95,405 70,400
+      Q50,395 45,380
+      Z
+    " fill="#FDF0C0" opacity="0.55"/>
+
+    <!-- Tugu Jogja monument (center, small but detailed) -->
+    <!-- Base steps -->
+    <rect x="140" y="380" width="32" height="8"  rx="2" fill="#FDF0C0" opacity="0.9"/>
+    <rect x="144" y="368" width="24" height="12" rx="2" fill="#FDF0C0" opacity="0.9"/>
+    <!-- Column body -->
+    <rect x="148" y="340" width="16" height="28" rx="2" fill="#FDF0C0" opacity="0.9"/>
+    <!-- Column band -->
+    <rect x="146" y="344" width="20" height="5"  rx="1" fill="url(#gold)" opacity="0.6"/>
+    <!-- Upper shaft -->
+    <rect x="152" y="310" width="8"  height="30" rx="1" fill="#FDF0C0" opacity="0.9"/>
+    <!-- Shaft band -->
+    <rect x="151" y="318" width="10" height="4"  rx="1" fill="url(#gold)" opacity="0.6"/>
+    <!-- Finial cone -->
+    <path d="M150,310 L156,290 L162,310 Z" fill="#FDF0C0" opacity="0.9"/>
+    <!-- Finial ball -->
+    <circle cx="156" cy="288" r="4" fill="#FDF0C0" opacity="0.9"/>
+
+    <!-- Sea waves at the bottom -->
+    <path d="M30,405 Q70,390 110,405 Q150,420 190,405 Q230,390 270,405 L270,460 L30,460 Z"
+          fill="#FDF0C0" opacity="0.45"/>
+    <path d="M30,425 Q70,410 110,425 Q150,440 190,425 Q230,410 270,425 L270,460 L30,460 Z"
+          fill="#FDF0C0" opacity="0.3"/>
+
+  </g>
+
+  <!-- ── J outline stroke for crispness ── -->
+  <path d="
+    M100,20 L340,20 L340,50
+    L250,50 L250,320
+    Q250,440 160,455
+    Q60,465 45,380
+    L45,355 L75,355
+    L75,375
+    Q80,430 155,425
+    Q225,418 225,330
+    L225,50 L100,50 Z
+  " fill="none" stroke="#8B5E00" stroke-width="3"/>
+</svg>

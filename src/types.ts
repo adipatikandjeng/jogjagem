@@ -1,0 +1,137 @@
+export interface Review {
+  id: string;
+  userName: string;
+  userAvatar: string;
+  rating: number;
+  date: string;
+  comment: string;
+  travelerType?: 'Solo' | 'Couple' | 'Family' | 'Friends';
+}
+
+export interface EcosystemPartner {
+  id: string;
+  name: string;
+  category: 'hotel' | 'restaurant' | 'cafe' | 'guide' | 'souvenir' | 'rental' | 'agent' | 'transport';
+  image: string;
+  rating: number;
+  price: string;
+  distance: string;
+  description: string;
+  address: string;
+  promotion?: string;
+  phone?: string;
+  coordinates: { lat: number; lng: number };
+  isSponsored?: boolean;
+  sponsorTier?: number;
+  businessId?: string | number | null;
+  targetUrl?: string;
+}
+
+export interface FAQ {
+  q: string;
+  a: string;
+}
+
+export interface WeatherInfo {
+  temp: string;
+  condition: string;
+  status: string;
+}
+
+export interface Destination {
+  id: string;
+  name: string;
+  tagline: string;
+  category: string; // 'nature' | 'heritage' | 'beach' | 'adventure' | 'culinary' | 'family' | 'hidden-gem'
+  location: string;
+  subRegion: string; // Sleman, Bantul, Yogyakarta, Kulon Progo, Gunungkidul
+  images: { url: string; credit: string }[];
+  rating: number;
+  reviewCount: number;
+  description: string;
+  story: string;
+  ticketPrice: string;
+  openingHours: string;
+  facilities: string[];
+  travelTips: string[];
+  bestTime: string;
+  weather: WeatherInfo;
+  latitude: number;
+  longitude: number;
+  reviews: Review[];
+  partners: EcosystemPartner[];
+  faqs: FAQ[];
+  googleMapsUrl?: string;
+  googleReviewCount?: number;
+  seoTitle?: string;
+  seoTitleEn?: string;
+  seoKeywords?: string;
+  seoKeywordsEn?: string;
+  seoDescription?: string;
+  seoDescriptionEn?: string;
+  ogImageUrl?: string;
+  updatedAt?: string;
+  badge?: string;
+  badges?: string[];  videoUrl?: string;
+  businessId?: string | number | null;
+}
+
+export interface Festival {
+  id: string;
+  name: string;
+  date: string;
+  location: string;
+  image: string;
+  description: string;
+  highlights: string[];
+  category: string;
+  badge?: string;
+  badges?: string[];
+  latitude?: number;
+  longitude?: number;
+  destinationId?: string;
+  startDate?: string;
+  endDate?: string;
+  imageUrl?: string;
+  businessId?: string | number | null;
+}
+
+export interface TripDay {
+  dayNumber: number;
+  destinations: Destination[];
+  notes?: string;
+}
+
+export interface TripPlan {
+  id: string;
+  title: string;
+  startDate: string;
+  durationDays: number;
+  days: TripDay[];
+  notes?: string;
+}
+
+export interface Article {
+  id: string;
+  slug: string;
+  title: string;
+  title_en?: string;
+  excerpt?: string;
+  excerpt_en?: string;
+  content?: string;
+  content_en?: string;
+  cover_image?: string;
+  category?: string;
+  tags?: string[];
+  author?: string;
+  status?: string;
+  published_at?: string;
+  seo_title?: string;
+  seo_title_en?: string;
+  seo_description?: string;
+  seo_description_en?: string;
+  seo_keywords?: string;
+  seo_keywords_en?: string;
+  og_image?: string;
+  read_time_minutes?: number;
+}

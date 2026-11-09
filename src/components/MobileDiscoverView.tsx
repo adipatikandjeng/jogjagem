@@ -1,0 +1,1143 @@
+'use client';
+
+import React, { useState, useRef, useEffect } from 'react';
+import Image from 'next/image';
+import { useRouter, Link } from '@/i18n/navigation';
+import {
+  Search, MapPin, Bell, Star, Heart, ChevronRight,
+  Grid2x2, Compass, Utensils, Calendar, MoreHorizontal, Bookmark,
+  Mic, MicOff, Camera, Loader2, Sparkles, CalendarDays,
+  Sun, Leaf, Sunset, Moon,
+} from 'lucide-react';
+import { Destination, Festival } from '../types';
+import AdBanner from './AdBanner';
+import { auth, ai, ads, type BeAdCampaign, type BeHouseAd } from '../lib/api';
+import { useLocation } from '@/contexts/LocationContext';
+import { toSlug } from '@/lib/slug';
+import {
+  TuguJogjaIcon,
+  HiddenGemsIcon,
+  NatureEscapesIcon,
+  CulinaryLegendsIcon,
+  HeritageIcon,
+  AdventureIcon,
+  BeachesIcon,
+  FamilyFriendlyIcon,
+  WeekendIdeasIcon,
+  CampingIcon,
+  SunsetIcon,
+} from './CategoryIcons';
+import { useAuth } from '@/contexts/AuthContext';
+import { useLocale } from '@/contexts/LocaleContext';
+import { localizeCategoryPath } from '@/lib/category-slugs';
+import { AIPickCard } from './AIPickCard';
+import MobileDestinationCard from './MobileDestinationCard';
+import { MobileDestinationCardSkeleton, TrendingCardSkeleton } from './CardSkeleton';
+import RouteMapItinerary from './RouteMapItinerary';
+
+// ─── Types ───────────────────────────────────────────────────────────────────
+
+interface TrendingItem {
+  type: 'destination' | 'event';
+  id: string;
+  badge: string;
+  headline: string;
+  reason: string;
+  imageUrl: string;
+  rating: number;
+  location: string;
+}
+
+interface AIPick {
+  destinationId: string;
+  badge: string;
+  headline?: string;
+  crowd: string;
+  imageUrl?: string;
+  rating: number;
+}
+
+interface MobileDiscoverViewProps {
+  allDestinations: Destination[];
+  /** Unfiltered full destination list — used for AI picks lookup so picks
+   *  remain independent of the active category filter. */
+  baseDestinations: Destination[];
+  allEvents: Festival[];
+  trendingItems: TrendingItem[];
+  trendingLoading: boolean;
+  aiPicks: AIPick[];
+  onToggleSave: (dest: Destination) => void;
+  isSaved: (id: string) => boolean;
+  onOpenAuth: (mode: 'login' | 'register') => void;
+  selectedCategory: string | null;
+  onSelectCategory: (cat: string | null) => void;
+  destPage: number;
+  destTotalPages: number;
+  loadingMore: boolean;
+  onLoadMore: () => void;
+  topCampaign?: BeAdCampaign | null;
+  topHouseAd?: BeHouseAd | null;
+  nativeCampaign?: BeAdCampaign | null;
+}
+
+// ─── Category pill config ─────────────────────────────────────────────────────
+
+const ALL_CATEGORIES = [
+  { id: null,         tKey: 'category.all_journeys', Icon: TuguJogjaIcon },
+  { id: 'hidden-gem', tKey: 'category.hidden_gem',   Icon: HiddenGemsIcon },
+  { id: 'culinary',   tKey: 'category.culinary',     Icon: CulinaryLegendsIcon },
+  { id: 'adventure',  tKey: 'category.adventure',    Icon: AdventureIcon },
+  { id: 'heritage',   tKey: 'category.heritage',     Icon: HeritageIcon },
+  { id: 'nature',     tKey: 'category.nature',       Icon: NatureEscapesIcon },
+  { id: 'beach',      tKey: 'category.beach',        Icon: BeachesIcon },
+  { id: 'family',     tKey: 'category.family',       Icon: FamilyFriendlyIcon },
+  { id: 'weekend',    tKey: 'category.weekend',      Icon: WeekendIdeasIcon },
+  { id: 'camping',    tKey: 'category.camping',      Icon: CampingIcon },
+  { id: 'sunset',     tKey: 'category.sunset',       Icon: SunsetIcon },
+] as const;
+
+const PRIMARY_CATS = ALL_CATEGORIES.slice(0, 4);
+const MORE_CATS = ALL_CATEGORIES.slice(4);
+
+
+const HERO_SLIDES = [
+  { id: 'prambanan',    name: 'Candi Prambanan',   tagline: 'Candi Hindu abad ke-9 yang megah.',         image: 'https://images.unsplash.com/photo-1578469550956-0e16b69c6a3d?auto=format&fit=crop&w=1200&q=80', subRegion: 'Sleman',    latitude: -7.7520, longitude: 110.4914 },
+  { id: 'parangtritis', name: 'Pantai Parangtritis', tagline: 'Pasir vulkanik hitam dan sunset mistis.',  image: 'https://images.unsplash.com/photo-1602137704924-9a038cfb5253?auto=format&fit=crop&w=1200&q=80', subRegion: 'Bantul',    latitude: -8.0257, longitude: 110.3348 },
+  { id: 'merapi',       name: 'Gunung Merapi',       tagline: 'Petualangan jeep lava tour.',             image: 'https://images.unsplash.com/photo-1556375403-b96342fc0ee2?auto=format&fit=crop&w=1200&q=80', subRegion: 'Sleman',    latitude: -7.5400, longitude: 110.4460 },
+  { id: 'tamansari',    name: 'Taman Sari',          tagline: 'Istana air kerajaan yang tersembunyi.',   image: 'https://images.unsplash.com/photo-1625506276715-76ad63823181?auto=format&fit=crop&w=1200&q=80', subRegion: 'Yogyakarta', latitude: -7.8106, longitude: 110.3593 },
+  { id: 'goajomblang',  name: 'Goa Jomblang',        tagline: 'Cahaya surga di dalam gua.',             image: 'https://images.unsplash.com/photo-1628047563315-d1e8b8d222b9?auto=format&fit=crop&w=1200&q=80', subRegion: 'Gunungkidul', latitude: -7.9356, longitude: 110.6505 },
+];
+
+const MAX_SLIDES = 10;
+
+function haversineKm(lat1: number, lon1: number, lat2: number, lon2: number): number {
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos((lat1 * Math.PI) / 180) * Math.cos((lat2 * Math.PI) / 180) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function parseEventDate(raw: string): { day: string; month: string } {
+  const ISO_RE = /(\d{4})-(\d{2})-(\d{2})/;
+  const m = raw.match(ISO_RE);
+  if (m) {
+    const d = new Date(`${m[1]}-${m[2]}-${m[3]}`);
+    return {
+      day: String(d.getDate()).padStart(2, '0'),
+      month: d.toLocaleString('id-ID', { month: 'short' }).toUpperCase().slice(0, 3),
+    };
+  }
+  return { day: '--', month: '---' };
+}
+
+// ─── Sub-components ───────────────────────────────────────────────────────────
+
+function SectionHeader({
+  title,
+  onSeeAll,
+  seeAllLabel,
+  dark,
+}: {
+  title: string;
+  onSeeAll?: () => void;
+  seeAllLabel?: string;
+  dark?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between mb-3 px-4">
+      <span className={`${dark ? 'text-white' : 'text-royal-950'} font-manrope font-bold text-[15px] tracking-tight`}>{title}</span>
+      {onSeeAll && (
+        <button
+          onClick={onSeeAll}
+          className={`flex items-center gap-0.5 ${dark ? 'text-gold-400' : 'text-gold-600'} text-[11px] font-semibold`}
+        >
+          {seeAllLabel ?? 'Jelajahi Semua'} <ChevronRight className="h-3.5 w-3.5" />
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ─── Main component ───────────────────────────────────────────────────────────
+
+export default function MobileDiscoverView({
+  allDestinations,
+  baseDestinations,
+  allEvents,
+  trendingItems,
+  trendingLoading,
+  aiPicks,
+  onToggleSave,
+  isSaved,
+  onOpenAuth,
+  selectedCategory,
+  onSelectCategory,
+  destPage,
+  destTotalPages,
+  loadingMore,
+  onLoadMore,
+  topCampaign,
+  topHouseAd,
+  nativeCampaign,
+}: MobileDiscoverViewProps) {
+  const router = useRouter();
+  const { isAuthenticated, user } = useAuth();
+  const { t, locale, setLocale } = useLocale();
+  const [currentSlide, setCurrentSlide] = useState(0);
+  const [recommendation, setRecommendation] = useState<{
+    dest: Destination; headline: string; reason: string;
+  } | null>(null);
+  const [showMoreCats, setShowMoreCats] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isListening, setIsListening] = useState(false);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
+  const [expandedTrendingKey, setExpandedTrendingKey] = useState<string | null>(null);
+  const expandingRef = useRef(false);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+
+  const hour = new Date().getHours();
+  const greetingKey = hour < 11 ? 'hero.good_morning' : hour < 18 ? 'hero.good_afternoon' : 'hero.good_evening';
+  const userName = isAuthenticated && user?.name ? user.name : 'Traveler';
+  const heroSlides = allDestinations.length > 0
+    ? [...allDestinations]
+        .filter(d => d.images?.[0]?.url && d.category !== 'event' && d.category !== 'weekend' && d.category !== 'culinary')
+        .sort((a, b) => b.rating - a.rating)
+        .slice(0, MAX_SLIDES)
+        .map(d => ({
+          id: d.id,
+          name: d.name,
+          tagline: d.tagline || d.description?.slice(0, 80) || '',
+          image: d.images[0].url,
+          subRegion: d.subRegion || (d as any).sub_region || '',
+          latitude: d.latitude,
+          longitude: d.longitude,
+        }))
+    : HERO_SLIDES;
+
+  useEffect(() => {
+    // Reset slide index when slides change (e.g., category filter replaces allDestinations)
+    setCurrentSlide(0);
+    const timer = setInterval(() => setCurrentSlide(prev => (prev + 1) % heroSlides.length), 5000);
+    return () => clearInterval(timer);
+  }, [heroSlides.length]);
+
+  useEffect(() => {
+    if (allDestinations.length === 0) return;
+    const hour = new Date().getHours();
+    const timeOfDay = hour < 11 ? 'morning' : hour < 18 ? 'afternoon' : 'evening';
+    const fallbackDest = allDestinations.find(d => d.id === 'merapi' || d.id === 'prambanan') || allDestinations[0];
+    if (fallbackDest && !recommendation) {
+      setRecommendation({ dest: fallbackDest, headline: '', reason: fallbackDest.tagline });
+    }
+    ai.recommendMulti(timeOfDay).then(res => {
+      if (res.status === 'success' && res.data?.items?.length) {
+        const data = res.data.items[0];
+        const recommendedDest = allDestinations.find(d => d.id?.toLowerCase() === data.destinationId?.toLowerCase());
+        if (recommendedDest) {
+          setRecommendation({ dest: recommendedDest, headline: data.headline, reason: data.reason });
+        }
+      }
+    }).catch(() => {});
+  }, [allDestinations]);
+
+  const handleSearchSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (searchQuery.trim()) router.push(`/ai?q=${encodeURIComponent(searchQuery.trim())}`);
+  };
+
+  const handleVoiceSearch = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) return;
+    const recognition = new SpeechRecognition();
+    recognition.lang = 'id-ID';
+    recognition.continuous = false;
+    recognition.interimResults = false;
+    recognition.onstart = () => setIsListening(true);
+    recognition.onerror = () => setIsListening(false);
+    recognition.onend = () => setIsListening(false);
+    recognition.onresult = (event: any) => {
+      const transcript = event.results[0][0].transcript;
+      if (transcript) {
+        setSearchQuery(transcript);
+        router.push(`/ai?q=${encodeURIComponent(transcript)}`);
+      }
+    };
+    if (isListening) recognition.stop(); else recognition.start();
+  };
+
+  const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !file.type.startsWith('image/')) return;
+    setIsUploadingImage(true);
+    try {
+      const base64Data = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = () => resolve((reader.result as string).split(',')[1]);
+        reader.onerror = reject;
+      });
+      const previewUrl = URL.createObjectURL(file);
+      const res = await ai.imageSearch(base64Data, file.type);
+      if (res.status === 'success' && res.data) {
+        try {
+          sessionStorage.setItem('ai_image_result', JSON.stringify({
+            imageUrl: previewUrl,
+            reply: res.data.reply,
+            matchedDestinationIds: res.data.matchedDestinationIds,
+          }));
+        } catch { /* ignore */ }
+        router.push('/ai');
+      }
+    } catch { /* ignore */ }
+    finally {
+      setIsUploadingImage(false);
+      if (e.target) e.target.value = '';
+    }
+  };
+
+  const { coords, permission, requestLocation } = useLocation();
+  const [locationName, setLocationName] = useState('Yogyakarta');
+
+  useEffect(() => {
+    if (!coords) return;
+    fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${coords.lat}&lon=${coords.lng}&format=json&accept-language=id`,
+      { headers: { 'User-Agent': 'jogjagem-app/1.0' } }
+    )
+      .then(r => r.json())
+      .then(data => {
+        // Prefer county (kabupaten/kota) level, fall back to city/state
+        const a = data?.address;
+        const name =
+          a?.county ||        // e.g. Kabupaten Gunungkidul
+          a?.city ||          // e.g. Kota Yogyakarta
+          a?.town ||
+          a?.village ||
+          a?.state_district ||
+          'Yogyakarta';
+        // Strip "Kabupaten " / "Kota " prefix for brevity
+        setLocationName(name.replace(/^(Kabupaten|Kota)\s+/i, ''));
+      })
+      .catch(() => {});
+  }, [coords]);
+
+
+  function calculatePopularityScore(dest: Destination): number {
+    // 1. Base Score from Rating (normalized to 0-1)
+    const ratingScore = (dest.rating || 0) / 5;
+
+    // 2. Review Count Factor (logarithmic scaling)
+    const reviewScore = Math.min(Math.log10((dest.reviewCount || 0) + 1), 3) / 3;
+
+    // 3. Badge Bonus
+    let badgeBonus = 0;
+    if (dest.badge === 'trending') badgeBonus = 0.5;
+    else if (dest.badge === 'hidden_gem') badgeBonus = 0.2;
+
+    // Weights
+    const weightRating = 0.4;
+    const weightReviews = 0.4;
+
+    return (ratingScore * weightRating) + (reviewScore * weightReviews) + badgeBonus;
+  }
+
+// Popular destinations — sorted by popularity score DESC
+  const popularDests = (() => {
+    return [...allDestinations]
+      .sort((a, b) => calculatePopularityScore(b) - calculatePopularityScore(a));
+  })();
+
+  const handleToggleSave = (e: React.MouseEvent | undefined, dest: Destination) => {
+    e?.stopPropagation();
+    e?.preventDefault();
+    if (!auth.isLoggedIn()) { onOpenAuth('login'); return; }
+    onToggleSave(dest);
+  };
+
+  // AI pick destinations — use baseDestinations (unfiltered) so picks are
+  // always resolvable regardless of the active category filter.
+  const pickLookup = baseDestinations.length > 0 ? baseDestinations : allDestinations;
+  const aiDestinations = (
+    aiPicks.length > 0
+      ? aiPicks.slice(0, 4)
+      : pickLookup.slice(0, 4).map(d => ({
+          destinationId: d.id,
+          badge: 'AI Pick',
+          crowd: 'Sepi',
+          rating: d.rating,
+        }))
+  )
+    .map(p => ({
+      pick: p,
+      dest: pickLookup.find(d => d.id === p.destinationId),
+    }))
+    .filter((x): x is { pick: AIPick; dest: Destination } => x.dest !== undefined);
+
+  return (
+    <div className="xl:hidden min-h-screen bg-[#F5F0E8] text-white">
+
+      {/* ═══ Full-bleed hero section (slideshow bg behind header → hero → search → trending) ═══ */}
+      <div className="relative bg-[#1a1814] min-h-svh flex flex-col overflow-hidden shrink-0">
+        {/* Background slideshow — covers entire first screen */}
+        <div className="absolute inset-0 overflow-hidden -z-0">
+          {heroSlides.map((slide, idx) => (
+            <div
+              key={slide.id}
+              className={`absolute inset-0 transition-opacity duration-1000 ease-in-out ${idx === currentSlide ? 'opacity-70' : 'opacity-0'}`}
+            >
+              <Image src={slide.image} alt={slide.name} fill sizes="100vw" className="h-full w-full object-cover object-center brightness-90" referrerPolicy="no-referrer" />
+              <div className="absolute inset-0 bg-gradient-to-b from-[#1a1814]/50 via-[#1a1814]/20 via-60% to-[#1a1814]/95" />
+            </div>
+          ))}
+        </div>
+
+        {/* ── Header ── */}
+        <div className="z-40 bg-gradient-to-b from-black/50 to-transparent px-4 pt-3 pb-2.5 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-2">
+            <Image src="/logo-gold-new.png" alt="Jogjagem" width={24} height={24} className="h-6 w-auto" style={{ width: 'auto' }} />
+            <span className="font-manrope font-bold text-white text-[16px] tracking-widest uppercase">Jogjagem</span>
+          </div>
+          <div className="flex items-center gap-2.5">
+            <button
+              onClick={() => permission !== 'granted' && requestLocation()}
+              className="flex items-center gap-1 text-white/60 text-[11px] font-medium active:opacity-70"
+            >
+              <MapPin className="h-3.5 w-3.5 text-gold-500 shrink-0" />
+              <span className="max-w-[80px] truncate">{locationName}</span>
+            </button>
+            {/* Language toggle */}
+            <button
+              onClick={() => setLocale(locale === 'id' ? 'en' : 'id')}
+              className="flex items-center gap-1 px-2 py-1 rounded-full bg-white/10 border border-white/10 active:opacity-70 transition-all"
+            >
+              <span className="text-sm leading-none">{locale === 'id' ? '🇮🇩' : '🇬🇧'}</span>
+              <span className="text-[10px] font-bold text-white/80 uppercase">{locale === 'id' ? 'ID' : 'EN'}</span>
+            </button>
+            <button className="relative p-1.5">
+              <Bell className="h-5 w-5 text-white/70" />
+              <span className="absolute top-1 right-1 h-1.5 w-1.5 rounded-full bg-gold-500" />
+            </button>
+          </div>
+        </div>
+
+        {/* ── Hero body ── */}
+        <div className="relative z-10 flex-1 flex flex-col pt-4 max-[380px]:pt-2 pb-4 sm:pb-6 px-4 sm:px-8 min-h-0">
+
+          {/* ── AI Card: absolute top-right for ALL screen sizes ── */}
+          {recommendation ? (
+            <div className="absolute top-2 right-4 sm:right-6 bottom-auto w-[155px] max-[380px]:w-[140px] sm:w-[220px] lg:w-[290px] z-20 animate-[float_4s_ease-in-out_infinite]">
+              <AIPickCard
+                recommendation={recommendation}
+                isSaved={isSaved}
+                onToggleSave={(dest) => handleToggleSave(undefined, dest)}
+                onExplore={(dest) => router.push(`/destinations/${toSlug(dest.name)}`)}
+                className="relative w-full"
+                sizes="(min-width: 1024px) 290px, (min-width: 640px) 220px, 155px"
+              />
+            </div>
+          ) : (
+            <div className="absolute top-2 right-4 sm:right-6 w-[155px] max-[380px]:w-[140px] sm:w-[220px] lg:w-[290px] aspect-[2/3] rounded-2xl border border-white/5 animate-pulse bg-white/5 z-20" />
+          )}
+
+          {/* ── Content: single column on mobile, optimized for tablet ── */}
+          <div className="flex-1 flex flex-col justify-center min-w-0 pr-[165px] max-[380px]:pr-[148px] sm:pr-[236px] lg:pr-[310px] min-h-[245px] max-[380px]:min-h-[225px] sm:min-h-[280px]">
+            <p className="text-gold-400 text-[13px] sm:text-[14px] lg:text-[15px] font-semibold uppercase tracking-widest mb-2.5">
+              {t(greetingKey, { name: userName })}
+            </p>
+            <h1 className="font-manrope text-[32px] max-[380px]:text-[29px] sm:text-[42px] lg:text-[56px] font-extrabold leading-[1.08] text-white tracking-tight">
+              {(() => { const w = t('home.hero_title').split(' '); const main = w.slice(0, -1).join(' '); const accent = w[w.length - 1]; return <>{main}<br /><span className="text-transparent bg-clip-text bg-gradient-to-r from-gold-400 via-amber-400 to-gold-500">{accent}</span></>; })()}
+            </h1>
+            <p className="text-white/70 text-[13px] sm:text-[15px] lg:text-[16px] mt-3.5 leading-relaxed max-w-[220px] sm:max-w-md lg:max-w-lg">
+              {t('home.hero_subtitle')}
+            </p>
+
+            {/* Quick stat chips — tablet only */}
+            <div className="hidden sm:flex items-center gap-3 mt-6">
+              <div className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-white/8 border border-white/10 text-xs lg:text-sm text-white/70 backdrop-blur-sm">
+                <span className="text-gold-400 font-bold text-sm lg:text-base">{allDestinations.length || '90+'}</span> {t('common.explore')}
+              </div>
+              <div className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-white/8 border border-white/10 text-xs lg:text-sm text-white/70 backdrop-blur-sm">
+                <span className="text-gold-400 font-bold text-sm lg:text-base">{allEvents.length || '50+'}</span> {t('common.event')}
+              </div>
+              <div className="flex items-center gap-1.5 px-4 py-2.5 rounded-full bg-white/8 border border-white/10 text-xs lg:text-sm text-white/70 backdrop-blur-sm">
+                <span className="text-gold-400">★</span> 4.8 Rating
+              </div>
+            </div>
+          </div>
+
+          {/* ── Bottom: search + route + slide info + trending ── */}
+          <div className="shrink-0 flex flex-col gap-2 max-[380px]:gap-1.5">
+            {/* Search — full width, all sizes */}
+            <form onSubmit={handleSearchSubmit} className="relative mt-4 flex items-center rounded-full border border-white/20 bg-black/40 hover:bg-black/50 backdrop-blur-md p-1 shadow-xl transition-all duration-300 focus-within:ring-2 focus-within:ring-gold-500/50 focus-within:border-gold-400 w-full sm:max-w-lg overflow-hidden">
+              <Search className="ml-3.5 h-4 w-4 text-white/70 shrink-0" />
+              <input type="text" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} placeholder={t('hero.search_placeholder')} className="flex-1 bg-transparent py-2.5 sm:py-3 pl-2 pr-2 text-xs sm:text-sm text-white placeholder-white/60 focus:outline-none font-sans min-w-0" />
+              <input ref={fileInputRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" />
+              <div className="flex items-center gap-0.5 shrink-0 mr-1">
+                <button type="button" onClick={() => fileInputRef.current?.click()} disabled={isUploadingImage} className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-full hover:bg-white/10 text-white/70 hover:text-white transition-all disabled:opacity-50" title={t('hero.search_by_image')}>
+                  {isUploadingImage ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Camera className="h-3.5 w-3.5 sm:h-4 sm:w-4" />}
+                </button>
+                <button type="button" onClick={handleVoiceSearch} className={`flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-full transition-all ${isListening ? 'bg-red-500/20 text-red-400 animate-pulse' : 'hover:bg-white/10 text-white/70 hover:text-white'}`} title={t('hero.search_by_voice')}>
+                  {isListening ? <MicOff className="h-3.5 w-3.5 sm:h-4 sm:w-4" /> : <Mic className="h-3.5 w-3.5 sm:h-4 sm:w-4" />}
+                </button>
+                <button type="submit" className="flex h-8 w-8 sm:h-9 sm:w-9 items-center justify-center rounded-full bg-gradient-to-r from-gold-400 to-amber-500 hover:from-gold-500 hover:to-amber-600 active:scale-95 text-white transition-all shadow-md">
+                  <Search className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+                </button>
+              </div>
+            </form>
+
+            {/* ── Route Map Itinerary ── */}
+            <RouteMapItinerary
+              destinations={allDestinations}
+              events={allEvents}
+              coords={coords}
+              className="mt-16 sm:mt-2"
+            />
+
+            {/* Slide info + dots */}
+            <div className="px-1 flex items-center justify-between text-[10px] text-white/50">
+              <div className="flex items-center gap-1.5 min-w-0">
+                <span>📍</span>
+                <span className="font-semibold text-white/75 truncate max-w-[120px] sm:max-w-xs">{heroSlides[currentSlide]?.name}</span>
+                {coords && heroSlides[currentSlide]?.latitude && heroSlides[currentSlide]?.longitude && (
+                  <span className="shrink-0">({Math.round(haversineKm(coords.lat, coords.lng, heroSlides[currentSlide].latitude, heroSlides[currentSlide].longitude))} km)</span>
+                )}
+              </div>
+              <div className="flex items-center gap-1 ml-auto shrink-0">
+                {heroSlides.map((_, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => setCurrentSlide(idx)}
+                    className={`h-0.5 rounded-full transition-all duration-300 ${idx === currentSlide ? 'w-4 bg-gold-400' : 'w-1.5 bg-white/30'}`}
+                    aria-label={`Go to slide ${idx + 1}`}
+                  />
+                ))}
+              </div>
+            </div>
+
+            {/* Trending */}
+            {(trendingLoading || trendingItems.length > 0) && (
+              <div className="shrink-0 mt-1.5 max-[380px]:mt-1">
+                <SectionHeader title={t('hero.trending')} dark onSeeAll={() => router.push('/destinations')} />
+                <div
+                  className="flex gap-3 overflow-x-auto scrollbar-none px-4 snap-x snap-mandatory pb-3"
+                  onScroll={() => { if (!expandingRef.current && expandedTrendingKey) setExpandedTrendingKey(null); }}
+                >
+                  {trendingLoading
+                    ? Array.from({ length: 4 }).map((_, i) => (
+                        <div key={i} className="snap-start shrink-0">
+                          <TrendingCardSkeleton />
+                        </div>
+                      ))
+                    : trendingItems.slice(0, 8).map((item, idx) => {
+                        const cardKey = `trend-${item.type}-${item.id}-${idx}`;
+                        const isExpanded = expandedTrendingKey === cardKey;
+                        const dest = item.type === 'destination' ? allDestinations.find(d => d.id === item.id) : null;
+
+                        const handleCardClick = () => {
+                          if (!isExpanded) {
+                            expandingRef.current = true;
+                            setExpandedTrendingKey(cardKey);
+                            setTimeout(() => { expandingRef.current = false; }, 350);
+                            return;
+                          }
+                          expandingRef.current = true;
+                          setExpandedTrendingKey(null);
+                          setTimeout(() => { expandingRef.current = false; }, 350);
+                        };
+
+                        const handleCTA = (e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          if (dest) router.push(`/destinations/${toSlug(dest.name)}`);
+                          else if (item.type === 'destination') router.push(`/destinations/${item.id}`);
+                          else if (item.type === 'event') router.push(`/events/${item.id}`);
+                        };
+
+                        const handleSave = (e: React.MouseEvent) => {
+                          e.stopPropagation();
+                          if (dest) onToggleSave(dest);
+                        };
+
+                        return (
+                          <div
+                            key={cardKey}
+                            onClick={handleCardClick}
+                            role="button"
+                            tabIndex={0}
+                            onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') handleCardClick(); }}
+                            aria-expanded={isExpanded}
+                            className={`shrink-0 snap-start relative rounded-2xl overflow-hidden border text-left cursor-pointer select-none
+                              transition-all duration-300 ease-out
+                              ${isExpanded
+                                ? 'w-[200px] h-[240px] max-[380px]:h-[224px] border-gold-500/40'
+                                : 'w-[126px] h-[166px] max-[380px]:h-[154px] border-white/10 active:scale-95'}
+                            `}
+                          >
+                            {/* Image — full card */}
+                            <div className="absolute inset-0">
+                              {item.imageUrl
+                                ? <Image src={item.imageUrl} alt={item.headline} fill sizes="200px" className="object-cover" referrerPolicy="no-referrer" />
+                                : <div className="w-full h-full bg-[#1c1a17] flex items-center justify-center"><CalendarDays className="h-8 w-8 text-white/20" /></div>}
+                            </div>
+
+                            {/* Gradient scrim */}
+                            <div className={`absolute inset-0 bg-gradient-to-t ${isExpanded ? 'from-black/90 via-black/40 to-black/10' : 'from-black/80 via-black/20 to-transparent'}`} />
+
+                            {/* Rank number + badge top-left */}
+                            <div className="absolute top-2 left-2 z-10 flex items-center gap-1">
+                              <span className="flex items-center justify-center w-5 h-5 rounded-full bg-gold-500 text-royal-950 text-[9px] font-black leading-none shadow-lg">
+                                {idx + 1}
+                              </span>
+                              <span className="bg-white/20 backdrop-blur-sm text-white text-[8px] font-bold px-1.5 py-0.5 rounded-full leading-none border border-white/10">
+                                {item.badge}
+                              </span>
+                            </div>
+
+                            {/* Event badge top-right */}
+                            {item.type === 'event' && (
+                              <span className="absolute top-2 right-2 bg-black/50 backdrop-blur-sm text-white/90 text-[8px] px-1.5 py-0.5 rounded-full leading-none flex items-center gap-0.5 border border-white/10">
+                                <CalendarDays className="h-2 w-2" />{t('hero.event')}
+                              </span>
+                            )}
+
+                            {/* Save button — expanded destinations only */}
+                            {isExpanded && dest && (
+                              <button
+                                onClick={handleSave}
+                                className="absolute top-2 right-2 h-6 w-6 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center border border-white/10 active:scale-90 transition-transform"
+                              >
+                                <Heart className={`h-3 w-3 transition-all ${isSaved(dest.id) ? 'fill-red-500 text-red-500' : 'text-white'}`} />
+                              </button>
+                            )}
+
+                            {/* Info overlay — bottom */}
+                            <div className={`absolute bottom-0 left-0 right-0 flex flex-col transition-all duration-300 ${isExpanded ? 'p-2.5' : 'px-2 pb-2.5 pt-0'}`}>
+                              <p className={`text-white font-bold leading-tight drop-shadow-sm ${isExpanded ? 'text-[11px] line-clamp-2 mb-1.5' : 'text-[10px] line-clamp-2 mb-1'}`}>
+                                {item.headline}
+                              </p>
+
+                              <div className="flex items-center gap-1">
+                                {item.rating > 0 && (
+                                  <div className="flex items-center gap-0.5">
+                                    <Star className="h-2.5 w-2.5 fill-gold-400 text-gold-400" />
+                                    <span className="text-gold-400 text-[9px] font-extrabold">{item.rating.toFixed(1)}</span>
+                                  </div>
+                                )}
+                                {item.location && isExpanded && (
+                                  <span className="text-[9px] text-white/60 truncate flex items-center gap-0.5">
+                                    <MapPin className="h-2.5 w-2.5 shrink-0" />{item.location}
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Expanded panel */}
+                              {isExpanded && (
+                                <div className="mt-2 space-y-2">
+                                  {item.reason && (
+                                    <p className="text-[9px] text-white/65 leading-relaxed line-clamp-3">{item.reason}</p>
+                                  )}
+                                  <button
+                                    onClick={handleCTA}
+                                    className="w-full flex items-center justify-center gap-1 bg-gold-500 active:bg-gold-600 active:scale-[0.97] text-royal-950 font-bold text-[10px] py-1.5 rounded-lg transition-all"
+                                  >
+                                    {item.type === 'event' ? (t('hero.event_cta') || 'Lihat Event') : (t('hero.explore_cta') || 'Explore')}
+                                    <ChevronRight className="h-3 w-3" />
+                                  </button>
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                </div>
+                {/* Region chips — below trending carousel */}
+                <nav aria-label="Wisata per Wilayah Jogja" className="flex flex-wrap gap-2 px-4 pb-4 mt-3">
+                  {[
+                    { slug: 'kota-yogyakarta', label: 'Yogyakarta', title: 'Wisata Yogyakarta' },
+                    { slug: 'sleman', label: 'Sleman', title: 'Wisata Sleman & Merapi' },
+                    { slug: 'bantul', label: 'Bantul', title: 'Wisata Pantai & Kerajinan Bantul' },
+                    { slug: 'kulon-progo', label: 'Kulon Progo', title: 'Wisata Alam Kulon Progo' },
+                    { slug: 'gunungkidul', label: 'Gunungkidul', title: 'Wisata Pantai & Gua Gunungkidul' },
+                  ].map(({ slug, label, title }) => (
+                    <Link
+                      key={slug}
+                      href={`/location/${slug}`}
+                      title={title}
+                      aria-label={title}
+                      className="px-3 py-1 rounded-full text-xs font-semibold border border-white/15 text-white/60 hover:border-gold-400/50 hover:text-gold-400 hover:bg-white/5 active:bg-white/10 transition-all duration-200"
+                    >
+                      {label}
+                    </Link>
+                  ))}
+                </nav>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ═══ Rest of the page (no slideshow bg) ═══ */}
+      <div className="bg-[#F5F0E8] space-y-6 pt-6 pb-[calc(96px+env(safe-area-inset-bottom,0px))] relative z-20 mt-0 sm:-mt-4">
+
+        {/* ── Category pills ── */}
+        {(() => {
+          const orderedCategories = !selectedCategory
+            ? ALL_CATEGORIES
+            : (() => {
+                const activeIdx = ALL_CATEGORIES.findIndex(c => c.id === selectedCategory);
+                if (activeIdx <= 0) return ALL_CATEGORIES;
+                const activeItem = ALL_CATEGORIES[activeIdx];
+                const rest = ALL_CATEGORIES.filter((_, idx) => idx !== activeIdx);
+                return [rest[0], activeItem, ...rest.slice(1)];
+              })();
+          const primaryCats = orderedCategories.slice(0, 4);
+          const moreCats = orderedCategories.slice(4);
+
+          return (
+            <div>
+              <SectionHeader title={t('hero.browse_categories')} />
+              {/* Primary row: 4 cats + Lainnya button */}
+              <div className="grid grid-cols-5 gap-2 px-4">
+                {[...primaryCats, { id: '__more__' as const, tKey: 'category.more', Icon: MoreHorizontal }].map(({ id, tKey, Icon }) => {
+                  const isMore = id === '__more__';
+                  const active = isMore ? showMoreCats : selectedCategory === id;
+                  return (
+                    <button
+                      key={String(id)}
+                      onClick={() => {
+                        if (isMore) { setShowMoreCats(v => !v); return; }
+                        setShowMoreCats(false);
+                        onSelectCategory(active ? null : id);
+                      }}
+                      className={`flex flex-col items-center gap-1.5 py-2.5 rounded-2xl border transition-all duration-200 ${
+                        active ? 'bg-gold-500 border-gold-500' : 'bg-[#1C1A17] border-[#2E2A24]'
+                      }`}
+                    >
+                      <Icon className={`h-7 w-7 ${active ? 'text-royal-950' : 'text-gold-400'}`} />
+                      <span className={`text-[9px] font-bold text-center leading-tight whitespace-pre-line w-full px-0.5 ${active ? 'text-royal-950' : 'text-white/70'}`}>
+                        {t(tKey).includes(' ') ? t(tKey).replace(' ', '\n') : t(tKey)}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Expanded "Lainnya" row */}
+              {showMoreCats && (
+                <div className="grid grid-cols-5 gap-2 px-4 mt-2">
+                  {moreCats.map(cat => {
+                    const active = selectedCategory === cat.id;
+                    return (
+                      <button
+                        key={String(cat.id)}
+                        onClick={() => { onSelectCategory(active ? null : cat.id); setShowMoreCats(false); }}
+                        className={`flex flex-col items-center gap-1.5 py-2.5 rounded-2xl border transition-all duration-200 ${
+                          active ? 'bg-gold-500 border-gold-500' : 'bg-[#1c1a17]'
+                        }`}
+                      >
+                        <cat.Icon className={`h-7 w-7 ${active ? 'text-royal-950' : 'text-gold-400'}`} />
+                        <span className={`text-[9px] font-bold text-center leading-tight whitespace-pre-line w-full px-0.5 ${active ? 'text-royal-950' : 'text-white/70'}`}>
+                          {t(cat.tKey).includes(' ') ? t(cat.tKey).replace(' ', '\n') : t(cat.tKey)}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
+        {/* ── Popular destinations ── */}
+        <AdBanner placement="homepage_category_banner" category={selectedCategory ?? undefined} className="px-4" />
+        {(() => {
+          type MobileGridItem =
+            | { kind: 'organic'; dest: Destination }
+            | { kind: 'campaign'; camp: BeAdCampaign }
+            | { kind: 'house'; ad: BeHouseAd };
+
+          const buildMobileGrid = (): MobileGridItem[] => {
+            if (popularDests.length === 0) return [];
+            const items: MobileGridItem[] = popularDests.map(d => ({ kind: 'organic', dest: d }));
+            // Slot #5 (index 4) — only if we have enough organic (same as desktop)
+            if (items.length >= 5) {
+              const slot5: MobileGridItem = topCampaign
+                ? { kind: 'campaign', camp: topCampaign }
+                : topHouseAd
+                  ? { kind: 'house', ad: topHouseAd }
+                  : { kind: 'organic', dest: popularDests[4] };
+              items[4] = slot5;
+            }
+            // Slot #12 (index 13) — only if we have enough organic (same as desktop)
+            if (items.length >= 14) {
+              const slot13: MobileGridItem = topCampaign
+                ? { kind: 'campaign', camp: topCampaign }
+                : topHouseAd
+                  ? { kind: 'house', ad: topHouseAd }
+                  : { kind: 'organic', dest: popularDests[13] };
+              items[13] = slot13;
+            }
+            return items;
+          };
+          const mobileGrid = buildMobileGrid();
+
+          const makeImpressionRef = (campaignId: string) => (el: HTMLDivElement | null) => {
+            if (!el) return;
+            let timer: ReturnType<typeof setTimeout> | null = null;
+            const obs = new IntersectionObserver(([entry]) => {
+              if (entry.isIntersecting) {
+                timer = setTimeout(() => { ads.trackImpression(campaignId); obs.disconnect(); }, 1000);
+              } else {
+                if (timer) { clearTimeout(timer); timer = null; }
+              }
+            }, { threshold: 0.5 });
+            obs.observe(el);
+          };
+
+          return (
+            <div>
+               <SectionHeader
+                title={
+                  selectedCategory
+                    ? t('home.curated_category', { category: t(`category.${selectedCategory}`) })
+                    : t('home.popular_destinations')
+                }
+                onSeeAll={() => router.push(selectedCategory ? localizeCategoryPath(selectedCategory, locale) : '/destinations')}
+                seeAllLabel={
+                  selectedCategory
+                    ? locale === 'en'
+                      ? `View all ${t(`category.${selectedCategory.replace(/-/g, '_')}`) || selectedCategory}`
+                      : `Jelajahi Semua ${t(`category.${selectedCategory.replace(/-/g, '_')}`) || selectedCategory}`
+                    : locale === 'en' ? 'See All' : 'Jelajahi Semua'
+                }
+              />
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 px-4">
+                {popularDests.length === 0
+                  ? Array.from({ length: 4 }).map((_, i) => (
+                      <MobileDestinationCardSkeleton key={i} landscape={i % 7 === 0} />
+                    ))
+                  : mobileGrid.map((item, index) => {
+                      if (item.kind === 'campaign' || item.kind === 'house') {
+                        const isCamp = item.kind === 'campaign';
+                        const campaignId = isCamp ? item.camp.id : item.ad.id;
+                        const title = isCamp ? (item.camp.business_name || item.camp.partner_name || 'Iklan Pilihan') : item.ad.headline;
+                        const imageUrl = isCamp ? item.camp.image_url : item.ad.image_url;
+                        const targetUrl = isCamp ? item.camp.target_url : item.ad.target_url;
+
+                        const handleClick = (e: React.MouseEvent) => {
+                          e.preventDefault();
+                          if (isCamp) ads.trackClick(campaignId);
+                          if (targetUrl) window.open(targetUrl, '_blank', 'noopener,noreferrer');
+                        };
+
+                        return (
+                          <div
+                            key={`mobile-sponsored-grid-${campaignId}-${index}`}
+                            ref={isCamp ? makeImpressionRef(campaignId) : undefined}
+                            onClick={handleClick}
+                            className={`group relative w-full overflow-hidden rounded-[20px] bg-stone-900 border border-gold-500/40 ring-1 ring-gold-400/30 h-[180px] cursor-pointer ${index % 7 === 0 ? 'col-span-2' : ''}`}
+                          >
+                            {imageUrl ? (
+                              <Image
+                                src={imageUrl}
+                                alt={title}
+                                fill
+                                sizes="200px"
+                                className="object-cover object-center"
+                                referrerPolicy="no-referrer"
+                              />
+                            ) : (
+                              <div className="absolute inset-0 bg-gradient-to-br from-royal-900 to-royal-950" />
+                            )}
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
+                            <div className="absolute top-2.5 left-2.5">
+                              <div className="bg-gold-500 text-royal-950 px-2 py-0.5 rounded-lg text-[8px] font-sans font-bold uppercase tracking-wider shadow-md">
+                                DISPONSORI
+                              </div>
+                            </div>
+                            <div className="absolute bottom-0 inset-x-0 p-2.5 flex flex-col justify-end text-left">
+                              <p className="text-white font-extrabold text-[11px] leading-tight line-clamp-2 drop-shadow-sm">
+                                {title}
+                              </p>
+                              <span className="text-[9px] text-gold-400 font-semibold mt-0.5">
+                                Promosi Spesial
+                              </span>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      const dest = item.dest;
+                      return (
+                        <React.Fragment key={dest.id}>
+                          <MobileDestinationCard
+                            destination={dest}
+                            isSaved={isSaved(dest.id)}
+                            onToggleSave={(d) => {
+                              if (!auth.isLoggedIn()) { onOpenAuth('login'); return; }
+                              onToggleSave(d);
+                            }}
+                            onAuthRequired={() => onOpenAuth('login')}
+                            className={index % 7 === 0 ? 'col-span-2' : ''}
+                          />
+                          {index === 3 && (
+                            <AdBanner
+                              placement="listing_native"
+                              category={selectedCategory ?? undefined}
+                              variant="native"
+                              className="col-span-1 rounded-3xl"
+                            />
+                          )}
+                        </React.Fragment>
+                      );
+                    })
+                }
+              </div>
+              {!selectedCategory && destPage < destTotalPages && (
+                <div className="mt-6 flex justify-center px-4">
+                  <button
+                    onClick={onLoadMore}
+                    disabled={loadingMore}
+                    className="px-6 py-2 bg-gradient-to-r from-gold-500 to-amber-600 hover:from-gold-600 hover:to-amber-700 disabled:opacity-50 text-white rounded-full font-semibold text-xs transition-all duration-300 shadow-md hover:shadow-lg flex items-center space-x-2 cursor-pointer"
+                  >
+                    {loadingMore ? (
+                      <>
+                        <span className="animate-spin rounded-full h-3.5 w-3.5 border-2 border-white border-t-transparent"></span>
+                        <span>{t('common.loading')}</span>
+                      </>
+                    ) : (
+                      <span>{t('common.load_more')}</span>
+                    )}
+                  </button>
+                 </div>
+               )}
+             </div>
+           );
+         })()}
+
+         {/* ── Event & Festival ── */}
+        {(allEvents.length > 0 || trendingLoading) && (() => {
+          type MobileEventItem =
+            | { kind: 'organic'; evt: Festival }
+            | { kind: 'sponsored'; camp: BeAdCampaign };
+
+          const buildMobileEvents = (): MobileEventItem[] => {
+            const organic: MobileEventItem[] = allEvents.slice(0, 10).map(e => ({ kind: 'organic', evt: e }));
+            if (!nativeCampaign || organic.length === 0) return organic;
+            const sponsored: MobileEventItem = { kind: 'sponsored', camp: nativeCampaign };
+            if (organic.length >= 2) organic.splice(2, 0, sponsored);
+            if (organic.length >= 8) organic.splice(8, 0, { ...sponsored });
+            return organic;
+          };
+          const mobileEvents = buildMobileEvents();
+
+          const makeImpressionRef = (campaignId: string) => (el: HTMLDivElement | null) => {
+            if (!el) return;
+            let timer: ReturnType<typeof setTimeout> | null = null;
+            const obs = new IntersectionObserver(([entry]) => {
+              if (entry.isIntersecting) {
+                timer = setTimeout(() => { ads.trackImpression(campaignId); obs.disconnect(); }, 1000);
+              } else {
+                if (timer) { clearTimeout(timer); timer = null; }
+              }
+            }, { threshold: 0.5 });
+            obs.observe(el);
+          };
+
+          return (
+            <div>
+              <SectionHeader title={t('home.upcoming_events')} onSeeAll={() => router.push('/events')} />
+              <div
+                className="flex gap-3.5 overflow-x-auto scrollbar-none px-4 snap-x snap-mandatory pb-1"
+                onScroll={() => { if (expandedTrendingKey?.startsWith('evt-')) setExpandedTrendingKey(null); }}
+              >
+                {allEvents.length === 0
+                  ? Array.from({ length: 4 }).map((_, i) => (
+                      <div key={i} className="shrink-0 snap-start w-[140px] rounded-2xl overflow-hidden bg-royal-950/5 border border-royal-950/10 animate-pulse aspect-[3/4]" />
+                    ))
+                  : mobileEvents.slice(0, 7).map((item, idx) => {
+                      if (item.kind === 'sponsored') {
+                        const camp = item.camp;
+                        const handleClick = (e: React.MouseEvent) => {
+                          e.preventDefault();
+                          ads.trackClick(camp.id);
+                          if (camp.target_url) window.open(camp.target_url, '_blank', 'noopener,noreferrer');
+                        };
+
+                        return (
+                          <div
+                            key={`mobile-sponsored-evt-${camp.id}-${idx}`}
+                            ref={makeImpressionRef(camp.id)}
+                            onClick={handleClick}
+                            className="shrink-0 snap-start relative rounded-2xl overflow-hidden border border-gold-500/40 ring-1 ring-gold-400/30 text-left cursor-pointer select-none w-[140px] h-[186px]"
+                          >
+                            <div className="absolute inset-0 bg-[#1c1a17]">
+                              {camp.image_url ? (
+                                <Image src={camp.image_url} alt={camp.business_name || camp.partner_name || 'Event Sponsor'} fill sizes="200px" className="object-cover" referrerPolicy="no-referrer" />
+                              ) : (
+                                <div className="w-full h-full bg-[#2a2724]" />
+                              )}
+                            </div>
+                            <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+                            <div className="absolute top-2.5 left-2.5 bg-gold-500 text-royal-950 rounded-lg px-2 py-0.5 text-center shadow-md">
+                              <p className="text-[9px] font-black leading-none uppercase">DISPONSORI</p>
+                            </div>
+                            <div className="absolute bottom-0 left-0 right-0 flex flex-col px-2.5 pb-2.5 pt-0">
+                              <p className="text-white font-extrabold text-[11px] leading-tight line-clamp-2 mb-0.5 drop-shadow-sm">
+                                {camp.business_name || camp.partner_name || 'Event Sponsor'}
+                              </p>
+                              <p className="text-gold-400 text-[9px] truncate font-semibold">
+                                Promo Spesial
+                              </p>
+                            </div>
+                          </div>
+                        );
+                      }
+
+                      const evt = item.evt;
+                      const { day, month } = parseEventDate(evt.date);
+                      const evtKey = `evt-${evt.id}`;
+                      const isExpanded = expandedTrendingKey === evtKey;
+
+                      const handleEvtClick = () => {
+                        if (!isExpanded) { setExpandedTrendingKey(evtKey); return; }
+                        setExpandedTrendingKey(null);
+                      };
+                      const handleEvtCTA = (e: React.MouseEvent) => {
+                        e.stopPropagation();
+                        router.push(`/events/${evt.id}`);
+                      };
+
+                      return (
+                        <div
+                          key={evt.id}
+                          onClick={handleEvtClick}
+                          role="button"
+                          tabIndex={0}
+                          onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') handleEvtClick(); }}
+                          aria-expanded={isExpanded}
+                          className={`shrink-0 snap-start relative rounded-2xl overflow-hidden border text-left cursor-pointer select-none transition-all duration-300 ease-out
+                            ${isExpanded
+                              ? 'w-[200px] h-[260px] border-gold-500/40'
+                              : 'w-[140px] h-[186px] border-white/10 active:scale-95'}
+                          `}
+                        >
+                          {/* Image — full card */}
+                          <div className="absolute inset-0 bg-[#1c1a17]">
+                            {evt.image
+                              ? <Image src={evt.image} alt={evt.name} fill sizes="200px" className="object-cover" referrerPolicy="no-referrer" />
+                              : <div className="w-full h-full bg-[#2a2724]" />
+                            }
+                          </div>
+
+                          {/* Gradient scrim */}
+                          <div className={`absolute inset-0 bg-gradient-to-t ${isExpanded ? 'from-black/90 via-black/50 to-black/10' : 'from-black/80 via-black/20 to-transparent'}`} />
+
+                          {/* Date badge — top-left */}
+                          <div className="absolute top-2.5 left-2.5 bg-gold-400 text-royal-950 rounded-xl px-2 py-1 text-center min-w-[32px] shadow-md border border-gold-300/30">
+                            <p className="text-[12px] font-black leading-none text-[#1c1a17]">{day}</p>
+                            <p className="text-[8px] font-bold leading-none mt-0.5 text-[#1c1a17]">{month}</p>
+                          </div>
+
+                          {/* Info overlay — bottom */}
+                          <div className={`absolute bottom-0 left-0 right-0 flex flex-col transition-all duration-300 ${isExpanded ? 'p-2.5' : 'px-2.5 pb-2.5 pt-0'}`}>
+                            <p className={`text-white font-extrabold leading-tight drop-shadow-sm ${isExpanded ? 'text-[11px] line-clamp-2 mb-1' : 'text-[11px] line-clamp-2 mb-0.5'}`}>
+                              {evt.name}
+                            </p>
+                            <p className="text-white/60 text-[9px] truncate flex items-center gap-0.5">
+                              <MapPin className="h-2.5 w-2.5 shrink-0" />{evt.location}
+                            </p>
+
+                            {/* Expanded panel */}
+                            {isExpanded && (
+                              <div className="mt-2 space-y-2">
+                                {evt.description && (
+                                  <p className="text-[9px] text-white/65 leading-relaxed line-clamp-3">{evt.description}</p>
+                                )}
+                                <button
+                                  onClick={handleEvtCTA}
+                                  className="w-full flex items-center justify-center gap-1 bg-gold-500 active:bg-gold-600 active:scale-[0.97] text-royal-950 font-bold text-[10px] py-1.5 rounded-lg transition-all"
+                                >
+                                  {t('hero.event_cta') || 'Lihat Event'}
+                                  <ChevronRight className="h-3 w-3" />
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+              </div>
+            </div>
+          );
+        })()}
+
+        {/* ── AI Picks ── */}
+        {(aiDestinations.length > 0 || trendingLoading) && (
+          <div>
+            <SectionHeader title={t('home.ai_picks')} onSeeAll={() => router.push('/ai')} />
+            <div className="flex gap-3.5 overflow-x-auto scrollbar-none px-4 snap-x snap-mandatory pb-1">
+              {aiDestinations.length === 0
+                ? Array.from({ length: 3 }).map((_, i) => (
+                    <div key={i} className="shrink-0 snap-start w-[240px] rounded-2xl overflow-hidden bg-royal-950/5 border border-royal-950/10 animate-pulse aspect-[16/10]" />
+                  ))
+                : aiDestinations.slice(0, 4).map(({ pick, dest }) => {
+                const img = (pick as any).imageUrl || dest.images?.[0]?.url || dest.ogImageUrl || '';
+                return (
+                  <div
+                    key={dest.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => router.push(`/destinations/${toSlug(dest.name)}`)}
+                    onKeyDown={(e) => { if (e.key === 'Enter') router.push(`/destinations/${toSlug(dest.name)}`); }}
+                    className="relative shrink-0 snap-start w-[240px] rounded-[22px] overflow-hidden bg-[#1c1a17] border border-[#E8E0D5]/20 text-left cursor-pointer active:scale-[0.98] transition-transform aspect-[16/10]"
+                  >
+                    {img && <Image src={img} alt={dest.name} fill sizes="240px" className="object-cover" referrerPolicy="no-referrer" />}
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/95 via-black/40 to-transparent" />
+                    
+                    <div className="absolute top-3 left-3 bg-amber-500/90 text-white text-[8px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shadow-sm">
+                      {pick.badge || 'PILIHAN AI'}
+                    </div>
+                    
+                    <button
+                      onClick={(e) => handleToggleSave(e, dest)}
+                      className="absolute top-3 right-3 h-7 w-7 rounded-full bg-black/30 backdrop-blur-sm flex items-center justify-center border border-white/10 active:scale-90 transition-transform"
+                    >
+                      <Heart className={`h-3.5 w-3.5 ${isSaved(dest.id) ? 'fill-red-500 text-red-500' : 'text-white'}`} />
+                    </button>
+                    
+                    <div className="absolute bottom-0 inset-x-0 p-3.5 flex flex-col justify-end">
+                      <h4 className="text-white font-extrabold text-[14px] leading-tight truncate">{dest.name}</h4>
+                      <p className="text-white/70 text-[10px] line-clamp-1 mt-0.5 font-light">
+                        {dest.tagline || dest.description?.slice(0, 60)}
+                      </p>
+                      
+                      <div className="flex items-center justify-between mt-1.5 pt-1.5 border-t border-white/10">
+                        <div className="flex items-center gap-1.5">
+                          <span className="flex items-center gap-0.5 text-gold-400 text-[11px] font-bold">
+                            <Star className="h-3.5 w-3.5 fill-gold-400 text-gold-400" />
+                            {(pick.rating || dest.rating || 0).toFixed(1)}
+                          </span>
+                          <span className="text-white/40 text-[9px]">•</span>
+                          <span className="text-white/60 text-[9px] font-medium flex items-center gap-0.5">
+                            <span>📍</span> {dest.subRegion || dest.location}
+                          </span>
+                        </div>
+                        <span className="text-gold-400 text-[9px] font-extrabold bg-gold-400/10 px-2 py-0.5 rounded-md uppercase tracking-wider">
+                          {pick.crowd}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+
+
+      </div>
+    </div>
+  );
+}
